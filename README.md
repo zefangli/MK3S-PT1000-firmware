@@ -6,7 +6,7 @@ This is a **personal, unofficial fork** of [prusa3d/Prusa-Firmware](https://gith
 
 Licensed under [GPL-3.0](LICENSE), same as upstream. Credit to [Prusa Research](https://prusa3d.com/) and [Marlin](https://github.com/MarlinFirmware/Marlin/) (by Scott Lahteine / @thinkyhead et al.), whose work this is built on.
 
-Branch `pt1000-410c`, based on upstream tag `v3.14.1`. See `git log` and `git diff v3.14.1` for the exact changes.
+Branch `pt1000-420c`, based on upstream tag `v3.14.1`. See `git log` and `git diff v3.14.1` for the exact changes.
 
 ## What's changed
 
@@ -40,8 +40,6 @@ ninja MK3S_MULTILANG
 Output: `build/release/MK3S_MK3S+_FW_3.14.1_MULTILANG.hex`.
 
 If your system `pip` already works, skip the venv workaround and follow bootstrap.py's normal flow (see [Upstream build reference](#upstream-build-reference)).
-
-> Note: `.venv/` is **not** in `.gitignore` here — if you keep this as a git repo, either add it or avoid committing it accidentally.
 
 ## Flashing
 
