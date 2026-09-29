@@ -1,37 +1,86 @@
-# Prusa Firmware MK3
+# Prusa Firmware MK3 — PT1000 fork (unofficial)
 
-This repository contains the source code and the development versions of the firmware running on the [Original Prusa i3](https://prusa3d.com/) MK3S/MK3/MK2.5S/MK2.5 line of printers.
+This is a **personal, unofficial fork** of [prusa3d/Prusa-Firmware](https://github.com/prusa3d/Prusa-Firmware), modified for one specific Original Prusa MK3S+ printer to support a PT1000 hotend sensor wired directly to the stock thermistor input. It is **not affiliated with, endorsed by, or supported by Prusa Research**.
 
-The latest official builds can be downloaded from [Prusa Drivers](https://www.prusa3d.com/drivers/). Pre-built development releases are also [available here](https://github.com/prusa3d/Prusa-Firmware/releases).
+**Flash this at your own risk.** It changes hotend temperature limits and sensor behavior. If you don't understand the changes below and haven't verified your own hardware, use the official firmware from [Prusa Drivers](https://www.prusa3d.com/drivers/) instead.
 
-The firmware for the Original Prusa i3 printers is proudly based on [Marlin 1.0.x](https://github.com/MarlinFirmware/Marlin/) by Scott Lahteine (@thinkyhead) et al. and is distributed under the terms of the [GNU GPL 3 license](LICENSE).
+Licensed under [GPL-3.0](LICENSE), same as upstream. Credit to [Prusa Research](https://prusa3d.com/) and [Marlin](https://github.com/MarlinFirmware/Marlin/) (by Scott Lahteine / @thinkyhead et al.), whose work this is built on.
 
-This repository contains _development material only!_
+Branch `pt1000-410c`, based on upstream tag `v3.14.1`. See `git log` and `git diff v3.14.1` for the exact changes.
 
+## What's changed
 
-# Build
-## Linux
-There are two ways to build Prusa-Firmware on Linux: using [CMake](#cmake) (recommended for developers) or with [PF-build](#pf-build) which is more user-friendly for casual users.
+- **`Firmware/variants/MK3S.h`**: `PT1000_EXTRUDER` enabled → `TEMP_SENSOR_0 1047`, `HEATER_0_MAXTEMP 420`. Assumes a PT1000 wired directly to the Einsy hotend thermistor input using the stock 4.7k pullup, no amplifier board. (Upstream's PT100 options keep `HEATER_0_MAXTEMP 410`; stock thermistor stays at 305.)
+- **`Firmware/thermistortables.h`**: `temptable_1047` extended up to 450C. Added a `HEATER_0_RAW_HI_TEMP 16383` / `HEATER_0_RAW_LO_TEMP 0` override for sensor 1047. PT1000 is a PTC (resistance rises with temperature) but the NTC-oriented default direction meant MINTEMP/MAXTEMP safety checks never tripped for this sensor. Upstream's PT100 options (148/247) appear to have the same latent issue.
+- **Mesh bed leveling is unchanged in firmware.** Skipping it is done in PrusaSlicer, not here — see [Skipping bed leveling](#skipping-bed-leveling) below.
 
-### CMake
-#### Quick-start
-The workflow should be pretty straightforward for anyone with development experience. After installing git and a recent version of python 3 all you have to do is:
+## Build (Linux)
 
-    # clone the repository
-    git clone https://github.com/prusa3d/Prusa-Firmware
-    cd Prusa-Firmware
+Tested on a system with no working system `pip`. `./utils/bootstrap.py`'s pip step fails in that case, so a venv is used instead:
 
-    # automatically setup dependencies
-    ./utils/bootstrap.py
+```sh
+git clone https://github.com/zefangli/MK3S-PT1000-firmware.git
+cd MK3S-PT1000-firmware
 
-    # configure and build
-    mkdir build
-    cd build
-    cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=../cmake/AvrGcc.cmake
-    ninja
+# download avr-gcc, cmake, ninja, prusa3dboards into .dependencies/
+./utils/bootstrap.py
 
+# work around missing system pip
+python3 -m venv --without-pip .venv
+curl -sS https://bootstrap.pypa.io/get-pip.py | .venv/bin/python
+.venv/bin/pip install pyelftools polib regex
 
-#### Detailed CMake guide
+export PATH="$PWD/.venv/bin:$PWD/.dependencies/cmake-3.22.5/bin:$PWD/.dependencies/ninja-1.12.1:$PATH"
+
+mkdir -p build && cd build
+cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=../cmake/AvrGcc.cmake
+ninja MK3S_MULTILANG
+```
+
+Output: `build/release/MK3S_MK3S+_FW_3.14.1_MULTILANG.hex`.
+
+If your system `pip` already works, skip the venv workaround and follow bootstrap.py's normal flow (see [Upstream build reference](#upstream-build-reference)).
+
+> Note: `.venv/` is **not** in `.gitignore` here — if you keep this as a git repo, either add it or avoid committing it accidentally.
+
+## Flashing
+
+PrusaSlicer → Configuration → Flash printer firmware → select the `.hex` above.
+
+## Post-flash checklist
+
+1. **Sanity-check the sensor before heating.** `M105` at room temp should read close to actual room temperature. ~450C (pegged) means open circuit or miswiring; a large negative reading means a short.
+2. **Cross-check against a reference thermometer** at a mid-range temperature (~200C) before trusting the sensor at higher temps.
+3. **Recalibrate the thermal model**: `M310 A F`. Don't disable thermal model protection.
+4. **PID autotune** in the 380–390C range: `M303 E0 S390 C8`, then apply the results with `M301 P.. I.. D..` and save with `M500`.
+   - The LCD PID-tune menu allows setting a target up to 420C — past where MAXTEMP trips. Use the `M303`/`M301` console route instead of the LCD for the actual tune.
+5. **Keep nozzle targets at or below 400C.**
+   - MAXTEMP trips at ~418.6C as displayed (the last ADC step below `HEATER_0_MAXTEMP` 420).
+   - `M104`/`M109` do **not** clamp targets — commanding above the cutoff heats until MAXTEMP trips, which kills the print and requires a restart.
+6. **Expect the stock 40W heater cartridge may not hold 400C reliably** — it can trigger `PREHEAT ERROR` or `THERMAL RUNAWAY` if it can't keep up. Consider a higher-wattage heater if you intend to run near 400C regularly.
+
+### Hardware caveats
+
+- **Silicone sock**: the stock one is not rated for 400C. Use a sock rated above 400C, or run without one.
+- **Heatbreak**: must be all-metal. No PTFE-lined heatbreak in the hot zone at these temperatures.
+- **Wiring**: check heater and sensor wire insulation is rated for the temperatures you intend to run.
+- **ADC resolution**: roughly 3C per ADC step at 400C — expect coarser temperature reporting/control near the top of the range than at normal printing temps.
+- **Pullup resistor**: do **not** install the 1k pullup resistor commonly bundled with PT1000 sensors. It gives no usable gain at 400C with this wiring, and the firmware here assumes the stock 4.7k pullup.
+
+## Skipping bed leveling
+
+Mesh bed leveling (`G80`) is **not disabled in firmware**. The MK3 doesn't persist the mesh anyway, so without `G80` in the start G-code, only Live-Z is applied.
+
+To skip it: in PrusaSlicer, use a separate printer profile with the `G80` line removed from Printer Settings → Custom G-code → Start G-code.
+
+---
+
+## Upstream build reference
+
+The rest of this section is inherited from upstream Prusa-Firmware and covers general CMake usage, testing, and Windows/VSCode builds. It has not been changed for this fork beyond the sensor/variant edits noted above.
+
+### Detailed CMake guide
+
 Building with cmake requires:
 
 - cmake >= 3.22.5
@@ -49,22 +98,7 @@ Assuming a recent Debian/Ubuntu distribution, install the dependencies globally 
 
     sudo apt-get install cmake ninja python3-pyelftools python3-polib python3-regex gettext
 
-Prusa-Firmware depends on a pinned version of `avr-gcc` and the external `prusa3dboards` package. These can be setup using `./utils/bootstrap.py`:
-
-    # automatically setup dependencies
-    ./utils/bootstrap.py
-
-which will download and unpack them inside the `.dependencies` directory. `./utils/bootstrap.py` will also install `cmake`, `ninja` and the required python packages if missing, although installing those through the system's package manager is usually preferred.
-
-You can then proceed by creating a build directory, configure for AVR and build:
-
-    # configure
-    mkdir build
-    cd build
-    cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=../cmake/AvrGcc.cmake
-
-    # build
-    ninja
+`./utils/bootstrap.py` downloads a pinned `avr-gcc` and the external `prusa3dboards` package into `.dependencies/`, and will also try to install `cmake`, `ninja`, and the Python packages above if missing (via pip) — though installing those through your system's package manager, or the venv workaround above if pip is unavailable, is preferable.
 
 By default all variants are built. There are several ways to restrict the build for development. During configuration you can set:
 
@@ -72,7 +106,7 @@ By default all variants are built. There are several ways to restrict the build 
 - `cmake -DMAIN_LANGUAGES=languages`: comma-separated list of ISO language codes to include as main translations.
 - `cmake -DCOMMUNITY_LANGUAGES=languages`: comma-separated list of ISO language codes to include as community translations.
 
-When building the following targets are available:
+Available build targets:
 
 - `ninja ALL_MULTILANG`: build all multi-language targets (default)
 - `ninja ALL_ENGLISH`: build all single-language targets
@@ -84,113 +118,37 @@ When building the following targets are available:
 - `ninja check_lang_VARIANT`: build and check all languages for `VARIANT`
 - `ninja check_lang_VARIANT_ISO`: build and check language `ISO` for `VARIANT`
 
+### Automated tests
 
-#### Automated tests
 Automated tests are built with cmake by configuring for the current host:
 
-    # clone the repository
-    git clone https://github.com/prusa3d/Prusa-Firmware
-    cd Prusa-Firmware
-
-    # automatically setup dependencies
-    ./utils/bootstrap.py
-
-    # configure and build
-    mkdir build
-    cd build
+    mkdir build && cd build
     cmake .. -G Ninja
     ninja
-
-    # run the tests
     ctest
 
+### PF-build (guided script)
 
-### PF-build
-PF-build is recommended for users without development experience. Download or clone the repository,
-then run PF-build and simply follow the instructions:
+`PF-build.sh` is upstream's more user-friendly wrapper for casual users on Debian/Ubuntu (or derivative) distributions:
 
-    cd Prusa-Firmware
     ./PF-build.sh
 
-PF-build currently assumes a Debian/Ubuntu (or derivative) distribution.
+This fork hasn't been tested through PF-build — the manual CMake flow above is what was actually used and verified.
 
+### Windows / Visual Studio Code
 
-## Windows
-### Visual Studio Code (VSCode)
-#### Prerequisites
+Prerequisites: [Visual Studio Code](https://code.visualstudio.com/), the [CMake Tools plugin](https://marketplace.visualstudio.com/items?itemName=ms-vscode.cmake-tools), [Python](https://www.python.org/), [Git Bash](https://git-scm.com/downloads).
 
-* [Visual Studio Code](https://code.visualstudio.com/)
-* [CMake Tools plugin](https://marketplace.visualstudio.com/items?itemName=ms-vscode.cmake-tools)
-* [Python](https://www.python.org/)
-* [Git Bash](https://git-scm.com/downloads)
+    git clone https://github.com/zefangli/MK3S-PT1000-firmware.git
 
-#### First time setup
-
-Start by cloning the Prusa-Firmware repository
-
-    git clone https://github.com/prusa3d/Prusa-Firmware
-
-Open the `Prusa-Firmware` folder in VScode.
-
-Open a new terminal in VScode (Terminal→New Terminal) and run
+Open the folder in VSCode, open a terminal (Terminal → New Terminal), and run:
 
     python .\utils\bootstrap.py
 
-This will download all dependencies required to build the firmware. You should see a `.dependencies` folder in the Prusa-Firmware folder.
+This downloads dependencies into `.dependencies`. Reload VSCode; it should auto-configure the CMake project. If not, `Ctrl+Shift+P` → `CMake: Select a Kit` → `avr-gcc` (scan for kits first if it's not listed), or as a fallback add `.vscode/cmake-kits.json` under CMake Tools' "Additional Kits" setting, then reload.
 
-Reload VScode. If all works correctly you should see the VScode automatically configuring the CMake project for you. If this doesn't happen you likely need to set the CMake kit; This can be done in two ways:
+Build via the CMake Tools sidebar icon: find the target (e.g. `MK3S_MULTILANG`) and click Build. Output lands in `build/`.
 
-1. Type `Ctrl+Shift+P` and search for `CMake: Select a Kit`. Select `avr-gcc`. If none appear, Scan for kits first.
-2. If 1) does not work for some reason, as a last resort you can edit the CMake Tools settings. Search for "Additional Kits" and add `.vscode/cmake-kits.json` to the list.
+### Arduino IDE — unsupported for this fork
 
-After updating the kit, you may need to reload VScode.
-
-#### Building
-
-To start building a firmware, click the CMake Tools plugin icon on the far left side. You will get a very large list of targets to build. Find the firmware you'd like to build (like `MK3S_ENGLISH`) and select the small icon which shows "Build" when hovered over.
-
-The built .hex file can then be found in folder `Prusa-Firmware/build`
-
-
-## Arduino IDE (deprecated)
-
-Using Arduino IDE is still possible, but _no longer supported_. Prusa-Firmware requires a complex multi-step build process that cannot be done automatically with just the IDE. For a long time we provided instructions to use Arduino in combination with shell scripts, however starting with 3.13 the build system has been completely switched to `cmake`.
-
-Building with Arduino IDE results in a *limited* firmware:
-
-- Arduino IDE can only build a single, english-only variant at a time that you manually have to select
-- The build will not be reproducible (meaning you will likely get a different binary every time you build the same sources)
-- You need to download, patch and select the correct board definitions by hand
-
-For these reasons, you should think twice before reporting issues for a firmware built with Arduino. If you find a bug in the firmware, building and testing using CMake should be your first thought. Issues regarding Arduino builds are answered by the community and are not officially supported.
-
-
-### Environment preparation
-
-Install "Arduino Software IDE" from the official website https://www.arduino.cc -> Software -> Downloads. Version 1.8.19 or higher is required.
-
-Setup Arduino to install and use the Prusa board definitions:
-
-- Open Arduino and navigate to File -> Preferences -> Settings
-- To the text field "Additional Boards Manager URLs" add `https://raw.githubusercontent.com/prusa3d/Arduino_Boards/master/IDE_Board_Manager/package_prusa3d_index.json`
-- Open Board manager (Tools -> Board -> Board manager)
-- Install "Prusa Research AVR Boards by Prusa Research"
-
-
-### Source code preparation
-
-Clone or download this repository to your local drive.
-
-In the subdirectory `Firmware/variants/` select the configuration file (.h) corresponding to your printer model and manually copy it to `Firmware/Configuration_prusa.h`
-
-Run "Arduino IDE", then
-
-- Open the file `Firmware/Firmware.ino`
-- Select the target board with Tools -> Board -> "PrusaResearch Einsy RAMBo"
-- Open `Firmware/config.h` and change `LANG_MODE` to 0.
-
-
-### Compilation and upload
-
-- Run the compilation: Sketch -> Verify/Compile
-- Upload the result code into the connected printer: Sketch -> Upload
+Upstream marks Arduino IDE builds as deprecated (single-language only, non-reproducible, manual board-definition setup). This fork adds to that: Arduino IDE builds straight from `Firmware/Firmware.ino` only pick up this fork's PT1000 changes if you manually copy `Firmware/variants/MK3S.h` to `Firmware/Configuration_prusa.h` yourself — the CMake build does this automatically, Arduino does not. Given that extra footgun on top of an already-deprecated path, treat Arduino IDE builds of this fork as unsupported. Use the CMake flow above.
