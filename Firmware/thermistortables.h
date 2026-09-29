@@ -1201,7 +1201,14 @@ const short temptable_1047[][2] PROGMEM = {
   PtLine(200,1000,4700)
   PtLine(250,1000,4700)
   PtLine(300,1000,4700)
+  PtLine(350,1000,4700)
+  PtLine(400,1000,4700)
+  PtLine(450,1000,4700)
 };
+#endif
+#if (THERMISTORHEATER_0 == 1047) // PTC: raw ADC rises with temperature
+# define HEATER_0_RAW_HI_TEMP 16383
+# define HEATER_0_RAW_LO_TEMP 0
 #endif
 
 #if (THERMISTORAMBIENT == 2000) //100k thermistor NTCG104LH104JT1

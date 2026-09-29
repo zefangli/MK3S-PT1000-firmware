@@ -31,6 +31,7 @@
 // Uncomment the below for the E3D PT100 temperature sensor (with or without PT100 Amplifier)
 //#define E3D_PT100_EXTRUDER_WITH_AMP
 //#define E3D_PT100_EXTRUDER_NO_AMP
+#define PT1000_EXTRUDER // PT1000 on the stock thermistor port (4k7 pullup), 420C max
 //#define E3D_PT100_BED_WITH_AMP
 //#define E3D_PT100_BED_NO_AMP
 
@@ -318,7 +319,9 @@
 #define AMBIENT_MINTEMP -30
 
 // Maxtemps
-#if defined(E3D_PT100_EXTRUDER_WITH_AMP) || defined(E3D_PT100_EXTRUDER_NO_AMP)
+#if defined(PT1000_EXTRUDER)
+#define HEATER_0_MAXTEMP 420 // ~10C margin over a 400C target (ADC step ~3C here)
+#elif defined(E3D_PT100_EXTRUDER_WITH_AMP) || defined(E3D_PT100_EXTRUDER_NO_AMP)
 #define HEATER_0_MAXTEMP 410
 #else
 #define HEATER_0_MAXTEMP 305
@@ -605,6 +608,8 @@
 #define TEMP_SENSOR_0 247
 #elif defined(E3D_PT100_EXTRUDER_NO_AMP)
 #define TEMP_SENSOR_0 148
+#elif defined(PT1000_EXTRUDER)
+#define TEMP_SENSOR_0 1047
 #else
 #define TEMP_SENSOR_0 5
 #endif
